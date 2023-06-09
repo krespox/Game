@@ -1,5 +1,4 @@
-﻿#include <climits>
-#include <iostream>
+﻿#include <iostream>
 #include <fstream>
 #include <vector>
 #include <string>
@@ -152,63 +151,312 @@ public:
 
         std::cout << "Status został wczytany pomyślnie." << std::endl;
     }
-
-    void save_status(const std::string& filename) {
-        std::ofstream file(filename);
-        if (!file.is_open()) {
-            std::cout << "Nie można otworzyć pliku statusu do zapisu." << std::endl;
-            return;
-        }
-
-        file << gold << std::endl;
-        for (int unitIndex : jednostki) {
-            file << unitIndex << std::endl;
-        }
-
-        file.close();
-
-        std::cout << "Status został zapisany pomyślnie." << std::endl;
-    }
 };
 
-void tworzJednostke(Map& map, Status& status, int baseIdGracza) {
-    std::vector<Unit> units = getUnits();
+std::vector<std::string> plan_actions(const Map& map, const Status& status) {
+    std::vector<std::string> actions;
 
-    // Znajdź bazę gracza na mapie
-    std::pair<int, int> basePosition;
-    for (const auto& base : map.bazy) {
-        if (baseIdGracza == map.grid[base.second][base.first]) {
-            basePosition = base;
+    std::vector<Unit> units = getUnits();
+    std::vector<std::vector<int>> attackTable = getAttackTable();
+
+    // Przykładowa logika planowania akcji
+    for (int jednostkaIndex : status.jednostki) {
+        // Sprawdź, czy jednostka o danym indeksie istnieje
+        if (jednostkaIndex < 1 || jednostkaIndex > units.size()) {
+            std::cout << "Nieprawidłowy indeks jednostki: " << jednostkaIndex << std::endl;
+            continue;
+        }
+
+        const auto& jednostka = units[jednostkaIndex - 1];
+
+        // Znajdź najbliższą bazę
+        int minBaseDistance = INT_MAX;
+        std::pair<int, int> targetBase;
+
+        for (const auto& baza : map.bazy) {
+            int distance = abs(baza.first - map.przeszkody[jednostkaIndex - 1].first) + abs(baza.second - map.przeszkody[jednostkaIndex - 1].second);
+            if (distance < minBaseDistance) {
+                minBaseDistance = distance;
+                targetBase = baza;
+            }
+        }
+
+        // Sprawdź najbliższego przeciwnika
+        int minEnemyDistance = INT_MAX;
+        std::pair<int, int> targetEnemy;
+
+        for (const auto& przeciwnik : map.przeszkody) {
+            int distance = abs(przeciwnik.first - map.przeszkody[jednostkaIndex - 1].first) + abs(przeciwnik.second - map.przeszkody[jednostkaIndex - 1].second);
+            if (distance < minEnemyDistance && map.grid[przeciwnik.second][przeciwnik.first] != map.grid[map.przeszkody[jednostkaIndex - 1].second][map.przeszkody[jednostkaIndex - 1].first]) {
+                minEnemyDistance = distance;
+                targetEnemy = przeciwnik;
+            }
+        }
+
+        // Wykonaj ruch w kierunku przeciwnika lub bazy
+        std::string moveAction;
+        if (minEnemyDistance < minBaseDistance) {
+            // Wykonaj ruch w kierunku przeciwnika
+            moveAction = "MOVE " + std::to_string(jednostka.id) + " TO " + std::to_string(targetEnemy.first) + "," + std::to_string(targetEnemy.second);
+        }
+        else {
+            // Wykonaj ruch w kierunku bazy
+            moveAction = "MOVE " + std::to_string(jednostka.id) + " TO " + std::to_string(targetBase.first) + "," + std::to_string(targetBase.second);
+        }
+        actions.push_back(moveAction);
+
+        // Sprawdź czy atak jest możliwy
+        int attackRange = jednostka.attackRange;
+        if (minEnemyDistance <= attackRange) {
+            // Wykonaj atak na przeciwnika
+            std::string attackAction = "ATTACK " + std::to_string(jednostka.id) + " AT " + std::to_string(targetEnemy.first) + "," + std::to_string(targetEnemy.second);
+            actions.push_back(attackAction);
+        }
+    }
+
+    return actions;
+}
+
+void save_actions(const std::vector<std::string>& actions) {
+    std::ofstream file("rozkazy.txt");
+    if (!file.is_open()) {
+        std::cout << "Nie można otworzyć pliku do zapisu akcji." << std::endl;
+        return;
+    }
+
+    for (const auto& action : actions) {
+        file << action << std::endl;
+    }
+
+    file.close();
+
+    std::cout << "Akcje zostały zapisane w pliku 'rozkazy.txt'." << std::endl;
+}
+void save_status(const Status& status) {
+    std::ofstream file("status.txt");
+    if (!file.is_open()) {
+        std::cout << "Nie można otworzyć pliku do zapisu statusu." << std::endl;
+        return;
+    }
+
+    // Zapisz ilość złota
+    file << status.gold << std::endl;
+
+    // Zapisz jednostki na planszy
+    for (const auto& jednostkaIndex : status.jednostki) {
+        // Sprawdź, czy indeks jednostki jest poprawny
+        if (jednostkaIndex < 1 || jednostkaIndex > getUnits().size()) {
+            std::cout << "Nieprawidłowy indeks jednostki: " << jednostkaIndex << std::endl;
+            continue;
+        }
+        const auto& jednostka = getUnits()[jednostkaIndex - 1];
+        // Przykład: 1 Knight 70 5 400 1 5
+        file << jednostka.id << " " << jednostka.type << " " << jednostka.endurance << " " << jednostka.speed << " " << jednostka.cost << " " << jednostka.attackRange << " " << jednostka.buildTime << " " << jednostka.baseId << std::endl;
+    }
+    file.close();
+    std::cout << "Status został zapisany w pliku 'status.txt'." << std::endl;
+}
+
+Unit sprawdzNajlepszaJednostke(const std::vector<Unit>& units, const Map& map) {
+    Unit najlepszaJednostka;
+    double najwyzszaWartosc = 0.0;
+    std::vector<std::vector<int>> attackTable = getAttackTable();
+    for (const Unit& unit : units) {
+        double wartosc = (unit.attackRange / unit.endurance) * (unit.speed / (double)unit.buildTime) * (1.0 / unit.cost);
+
+        // Sprawdź, czy jednostka jest zdolna do ataku na przeciwnika
+        if (unit.attackRange > 0) {
+            for (const auto& przeciwnik : map.przeszkody) {
+                // Sprawdź, czy przeciwnik jest na zasięgu ataku
+                int distance = abs(przeciwnik.first - map.przeszkody[unit.id - 1].first) + abs(przeciwnik.second - map.przeszkody[unit.id - 1].second);
+                if (distance <= unit.attackRange && map.grid[przeciwnik.second][przeciwnik.first] != map.grid[map.przeszkody[unit.id - 1].second][map.przeszkody[unit.id - 1].first]) {
+                    // Jednostka może zaatakować przeciwnika, zwiększ wartość ataku na przeciwnika
+                    wartosc *= (attackTable[unit.id - 1][map.grid[przeciwnik.second][przeciwnik.first] - 1] / 100.0);
+                }
+            }
+        }
+
+        if (wartosc > najwyzszaWartosc) {
+            najwyzszaWartosc = wartosc;
+            najlepszaJednostka = unit;
+        }
+    }
+
+    return najlepszaJednostka;
+}
+void attackUnit(Unit& attacker, Unit& target, const std::vector<std::vector<int>>& attackTable) {
+    int attackerIndex = -1;
+    int targetIndex = -1;
+
+    // Pobranie indeksu jednostki atakującej
+    for (size_t i = 0; i < getUnits().size(); ++i) {
+        if (getUnits()[i].id == attacker.id) {
+            attackerIndex = i;
             break;
         }
     }
-    // Wybierz losową jednostkę z dostępnych
-    int randomIndex = std::rand() % units.size();
-    Unit unit = units[randomIndex];
 
-    // Wygeneruj unikalny identyfikator jednostki
-    unit.id = generateUniqueId();
+    // Pobranie indeksu jednostki atakowanej
+    for (size_t i = 0; i < getUnits().size(); ++i) {
+        if (getUnits()[i].id == target.id) {
+            targetIndex = i;
+            break;
+        }
+    }
 
-    // Ustal pozycję jednostki jako pozycję bazy
-    unit.x = basePosition.first;
-    unit.y = basePosition.second;
+    // Sprawdzenie poprawności indeksów jednostek
+    if (attackerIndex == -1 || targetIndex == -1) {
+        // Nieprawidłowe indeksy jednostek
+        return;
+    }
 
-    // Dodaj jednostkę do statusu
-    status.jednostki.push_back(unit.id);
+    // Pobranie typu jednostki atakującej i atakowanej
+    std::string attackerType = getUnits()[attackerIndex].type;
+    std::string targetType = getUnits()[targetIndex].type;
 
-    std::cout << "Utworzono jednostkę o identyfikatorze: " << unit.id << std::endl;
+    // Konwersja typów jednostek na indeksy w tabeli ataków
+    int attackerTypeIndex = -1;
+    int targetTypeIndex = -1;
+
+    if (attackerType == "Knight")
+        attackerTypeIndex = 0;
+    else if (attackerType == "Swordsman")
+        attackerTypeIndex = 1;
+    else if (attackerType == "Archer")
+        attackerTypeIndex = 2;
+    else if (attackerType == "Pikeman")
+        attackerTypeIndex = 3;
+    else if (attackerType == "Ram")
+        attackerTypeIndex = 4;
+    else if (attackerType == "Catapult")
+        attackerTypeIndex = 5;
+    else if (attackerType == "Worker")
+        attackerTypeIndex = 6;
+
+    if (targetType == "Knight")
+        targetTypeIndex = 0;
+    else if (targetType == "Swordsman")
+        targetTypeIndex = 1;
+    else if (targetType == "Archer")
+        targetTypeIndex = 2;
+    else if (targetType == "Pikeman")
+        targetTypeIndex = 3;
+    else if (targetType == "Ram")
+        targetTypeIndex = 4;
+    else if (targetType == "Catapult")
+        targetTypeIndex = 5;
+    else if (targetType == "Worker")
+        targetTypeIndex = 6;
+
+    // Sprawdzenie poprawności indeksów typów jednostek w tabeli ataków
+    if (attackerTypeIndex == -1 || targetTypeIndex == -1 ||
+        attackerTypeIndex >= attackTable.size() || targetTypeIndex >= attackTable[attackerTypeIndex].size()) {
+        // Nieprawidłowe indeksy typów jednostek w tabeli ataków
+        return;
+    }
+
+    // Pobranie wartości obrażeń z tabeli ataków
+    int damage = attackTable[attackerTypeIndex][targetTypeIndex];
+
+    // Odejmowanie obrażeń od wytrzymałości jednostki atakowanej
+    getUnits()[targetIndex].endurance -= damage;
+    if (getUnits()[targetIndex].endurance <= 0) {
+        // Jednostka została zniszczona
+        getUnits().erase(getUnits().begin() + targetIndex);
+        // Dodaj tutaj inne odpowiednie działania po zniszczeniu jednostki
+    }
 }
+std::string getUnitSymbol(const std::string& unitType) {
+    if (unitType == "Knight") {
+        return "K";
+    }
+    if (unitType == "Swordsman") {
+        return "S";
+    }
+    if (unitType == "Archer") {
+        return "A";
+    }
+    if (unitType == "Pikeman") {
+        return "P";
+    }
+    if (unitType == "Ram") {
+        return "R";
+    }
+    if (unitType == "Catapult") {
+        return "C";
+    }
+    if (unitType == "Worker") {
+        return "W";
+    }
+}
+std::string getBaseSymbol(int baseId) {
+    if (baseId == 1) {
+        return "P";
+    }
+    else if (baseId == 2) {
+        return "E";
+    }
+    else {
+        return "?";
+    }
+}
+// Funkcja tworząca jednostkę
+void tworzJednostke(const Map& map, Status& status, int baseId) {
+    std::vector<Unit> units = getUnits();
+    Unit najlepszaJednostka = sprawdzNajlepszaJednostke(units, map);
 
-int main() {
-    std::srand(std::time(0)); // Inicjalizacja generatora liczb losowych
+    // Przypisz unikalny identyfikator jednostce
+    najlepszaJednostka.id = generateUniqueId();
 
-    Map map("mapa.txt");
-    Status status("status.txt");
+    // Przypisz identyfikator bazy
+    najlepszaJednostka.baseId = baseId;
 
-    int baseIdGracza = 1; // Identyfikator bazy gracza
-    tworzJednostke(map, status, baseIdGracza);
+    // Dodaj najlepszą jednostkę do statusu
+    status.jednostki.emplace_back(najlepszaJednostka);
 
-    status.save_status("status.txt");
+    // Zmniejsz ilość złota o koszt tworzenia jednostki
+    status.gold -= najlepszaJednostka.cost;
+
+    // Dodaj dane o tworzeniu jednostki do pliku status.txt
+    std::ofstream file("status.txt", std::ios_base::app);
+    if (file.is_open()) {
+        std::string baseSymbol = getBaseSymbol(baseId);
+        std::string unitSymbol = getUnitSymbol(najlepszaJednostka.type);
+
+        // Przykład: P B 10 0 0 98 A
+        file << baseSymbol << " " << unitSymbol << " "
+            << najlepszaJednostka.x << " " << najlepszaJednostka.y << " "
+            << najlepszaJednostka.endurance << " " << najlepszaJednostka.id << std::endl;
+        file.close();
+
+        std::cout << "Jednostka została utworzona i zapisana w pliku 'status.txt'." << std::endl;
+    }
+    else {
+        std::cout << "Nie można otworzyć pliku do zapisu statusu." << std::endl;
+    }
+}
+int main(int argc, char* argv[]) {
+    if (argc != 3) {
+        std::cout << "Podaj nazwę pliku mapy oraz pliku statusu jako argumenty wywołania programu." << std::endl;
+        return 1;
+    }
+
+    std::string map_filename = argv[1];
+    Map map(map_filename);
+
+    if (map.grid.empty()) {
+        return 1;
+    }
+
+    std::string status_filename = argv[2];
+    Status status(status_filename);
+
+    if (status.jednostki.empty()) {
+        return 1;
+    }
+
+    std::vector<std::string> actions = plan_actions(map, status);
+    save_actions(actions);
 
     return 0;
 }
